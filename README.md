@@ -20,8 +20,10 @@ Aplikasi otomatisasi asisten pengetikan pintar menggunakan AI (**Google Gemini**
 ```text
 ├── auto_ketik_gemini.py       # Script auto-ketik dengan Gemini AI
 ├── auto_ketik_groq.py         # Script auto-ketik dengan Groq AI
+├── auto_suara_groq.py         # Script background auto-copas soal & TTS suara cewek (Pilihan Ganda)
 ├── auto_ketik_gemini.spec     # Konfigurasi build PyInstaller (Gemini)
 ├── auto_ketik_groq.spec       # Konfigurasi build PyInstaller (Groq)
+├── auto_suara_groq.spec       # Konfigurasi build PyInstaller (Auto Suara Groq)
 ├── api_keys_config.example.json # Template konfigurasi API Key Gemini
 ├── api_keys_groq.example.json   # Template konfigurasi API Key Groq
 ├── docs api gemini.md         # Dokumentasi referensi API Gemini
@@ -65,10 +67,15 @@ Salin file template contoh dan ubah dengan API Key Anda sendiri:
   ```bash
   python auto_ketik_gemini.py
   ```
-- **Menggunakan Groq**:
+- **Menggunakan Groq (Auto-Ketik)**:
   ```bash
   python auto_ketik_groq.py
   ```
+- **Menggunakan Groq (Background + Suara Cewek / Pilihan Ganda)**:
+  ```bash
+  python auto_suara_groq.py
+  ```
+  *(Jalankan script ini di latar belakang, lalu sorot soal pilihan ganda di layar dan tekan **`Ctrl + Shift + F8`**. Jawaban akan langsung dibisikkan suara cewek ke headset Anda).*
 
 ---
 
