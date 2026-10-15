@@ -382,36 +382,39 @@ def get_groq_answer_from_screen(screen_text, keys):
         "   - Screen OCR text may contain minor character substitutions ('l' vs '1', 'rn' vs 'm', 'cl' vs 'd', missing hyphens, or wrapped words across lines). Effortlessly infer the intended academic English words from context.\n\n"
         "STRICT TASK RULES:\n"
         "- Identify the single multiple-choice question on the screen.\n"
-        "- Output strictly and ONLY one single line:\n"
-        "Jawabannya [HURUF]\n\n"
-        "Do not repeat the question, do not output explanations, and do not make lists.\n\n"
+        "- Output strictly and ONLY one single line in this exact format:\n"
+        "Jawaban [HURUF]: [Isi teks pilihan jawaban tersebut]\n\n"
+        "CRITICAL RULES:\n"
+        "- Include the letter (A, B, C, D, or E) and the exact text of that choice.\n"
+        "- DO NOT provide any explanation, reason, description, or justification of WHY that answer was chosen.\n"
+        "- Do not repeat the question, do not make lists, and do not add conversational remarks.\n\n"
         "FEW-SHOT EXAMPLES:\n"
         "Input: 'Under no circumstances ___ left unattended. A. materials should be B. should materials be C. be materials D. materials be'\n"
-        "Output: Jawabannya B\n\n"
+        "Output: Jawaban B: should materials be\n\n"
         "Input: 'The data were far more reliable than ___ by the previous team. A. what was collected B. those collected C. that collected D. which collected'\n"
-        "Output: Jawabannya B\n\n"
+        "Output: Jawaban B: those collected\n\n"
         "Input: 'She suggested that he ___ earlier. A. comes B. come C. came D. coming'\n"
-        "Output: Jawabannya B\n\n"
+        "Output: Jawaban B: come\n\n"
         "Input: 'The teacher, along with his students, ___ in the classroom. A. are B. were C. is D. be'\n"
-        "Output: Jawabannya C\n\n"
+        "Output: Jawaban C: is\n\n"
         "Input: 'Neither the manager nor the employees ___ present at the meeting. A. was B. were C. is D. are'\n"
-        "Output: Jawabannya B\n\n"
+        "Output: Jawaban B: were\n\n"
         "Input: 'If I ___ you, I would take the opportunity. A. am B. was C. were D. be'\n"
-        "Output: Jawabannya C\n\n"
+        "Output: Jawaban C: were\n\n"
         "Input: 'I have lived in this city ___ ten years. A. since B. for C. from D. during'\n"
-        "Output: Jawabannya B\n\n"
+        "Output: Jawaban B: for\n\n"
         "Input: 'She enjoys ___ books in her free time. A. read B. reads C. reading D. to read'\n"
-        "Output: Jawabannya C\n\n"
+        "Output: Jawaban C: reading\n\n"
         "Input: '...the primary objective of which ___ to minimize sample contamination. A. to be B. is C. being D. it is'\n"
-        "Output: Jawabannya B\n\n"
+        "Output: Jawaban B: is\n\n"
         "Input: '...enduring not only extreme weather conditions ___ severe seismic vibrations. A. plus B. but also C. as well as D. along with'\n"
-        "Output: Jawabannya B\n\n"
+        "Output: Jawaban B: but also\n\n"
         "Input: 'Passage: For months Captain Sinclair watched morale erode... in private journal confessed to harrowing doubts... yet on deck maintained unwavering facade of jovial confidence... Question: What does passage imply regarding Sinclair outward demeanor? A. Reflected true optimism B. Deliberate performance to conceal anxiety and sustain crew spirits C. Callous indifference D. Resolved tactical blunders'\n"
-        "Output: Jawabannya B\n\n"
+        "Output: Jawaban B: Deliberate performance to conceal anxiety and sustain crew spirits\n\n"
         "Input: 'Passage: Hiram Bingham pushed through dense canopy... indigenous farmers mentioned stone ruins... Bingham was doubtful having encountered exaggerated claims during previous expedition seeking Vitcos... Question: What primarily caused Bingham to be skeptical? A. Treacherous terrain B. Prior experience with exaggerated claims C. Guide young age D. Spanish conquest'\n"
-        "Output: Jawabannya B\n\n"
+        "Output: Jawaban B: Prior experience with exaggerated claims\n\n"
         "Input: 'Passage: Gomez spent seasons pursuing elusive quetzal... discovered injured bird... institutional instinct urged him to preserve specimen for museum... yet gazing into frantic eyes recalled elder warning and untangled feathers, choosing living liberty... Question: Which best characterizes Gomez pivotal decision? A. Followed museum protocols B. Allowed moral reverence to override academic ambition C. Bird too damaged D. Net fatal'\n"
-        "Output: Jawabannya B\n"
+        "Output: Jawaban B: Allowed moral reverence to override academic ambition\n"
     )
 
     # Prioritas model: 120b (terbukti 100% pada soal jebakan sulit), lalu Qwen, lalu 20b
@@ -437,16 +440,34 @@ def get_groq_answer_from_screen(screen_text, keys):
                     print(f"  [!] Model {model_name} memicu filter penolakan, beralih ke model berikutnya...")
                     continue
 
-                # Ekstraksi huruf jawaban akhir secara ketat: HANYA "Jawabannya [A-E]"
-                match = re.search(r"Jawabannya\s+([A-Ea-e])", full_content)
+                # Ekstraksi huruf dan teks opsi: "Jawaban [HURUF]: [Isi pilihan]" (tanpa alasan deskripsi)
+                match = re.search(r"Jawabann?y?a?\s+([A-Ea-e])(?:[\:\,\-]\s*(.*))?", full_content, re.IGNORECASE)
                 if match:
-                    voice_answer = f"Jawabannya {match.group(1).upper()}"
+                    letter = match.group(1).upper()
+                    desc = (match.group(2) or "").strip()
+                    desc = re.sub(r"^[A-Ea-e][\.\)\:\-]\s*", "", desc).strip()
+                    if desc:
+                        voice_answer = f"Jawaban {letter}, {desc}"
+                    else:
+                        voice_answer = f"Jawaban {letter}"
+                    return voice_answer, full_content, idx + 1, model_name
+
+                # Format alternatif: "[A-E]: [Isi pilihan]"
+                match_alt = re.match(r"^([A-Ea-e])[\:\,\-]\s*(.*)", full_content)
+                if match_alt:
+                    letter = match_alt.group(1).upper()
+                    desc = match_alt.group(2).strip()
+                    desc = re.sub(r"^[A-Ea-e][\.\)\:\-]\s*", "", desc).strip()
+                    if desc:
+                        voice_answer = f"Jawaban {letter}, {desc}"
+                    else:
+                        voice_answer = f"Jawaban {letter}"
                     return voice_answer, full_content, idx + 1, model_name
 
                 # Cari huruf A, B, C, D, atau E pertama yang terisolasi
                 letter_match = re.search(r"\b([A-Ea-e])\b", full_content)
                 if letter_match:
-                    voice_answer = f"Jawabannya {letter_match.group(1).upper()}"
+                    voice_answer = f"Jawaban {letter_match.group(1).upper()}"
                     return voice_answer, full_content, idx + 1, model_name
 
             except Exception as e:
