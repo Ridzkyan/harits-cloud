@@ -12,8 +12,8 @@ Fitur:
    - Menggunakan 3 API key aktif dari api key.txt dengan rotasi/failover otomatis.
 3. KELUARAN SUARA CEWEK (TEXT-TO-SPEECH):
    - Groq memfilter antarmuka layar dan langsung menemukan soal & opsi A, B, C, D, E.
-   - Suara cewek ramah (Google Neural TTS / gTTS) langsung membisikkan huruf
-     jawaban dan alasannya ke headset pengguna.
+   - Suara cewek Indonesia fasih & ringan (Microsoft Gadis Neural TTS) membisikkan
+     huruf & opsi jawaban ke speaker laptop maupun headset/headphone pengguna.
 4. KONTROL SHORTCUT GLOBAL DI LATAR BELAKANG:
    - [Ctrl + Shift + F8] : Tangkap layar & jawab soal pilihan ganda via suara cewek.
    - [Ctrl + Shift + F9] : Hentikan suara seketika (Mute / Stop).
@@ -168,28 +168,55 @@ def stop_audio(verbose=False):
         print("\n[🔊] Suara dihentikan (Muted).")
 
 
+async def _generate_edge_tts_audio(text, voice="id-ID-GadisNeural", rate="+15%"):
+    """Menghasilkan audio suara cewek Indonesia fasih dan ringan via Edge Neural TTS."""
+    import edge_tts
+    comm = edge_tts.Communicate(text=text, voice=voice, rate=rate)
+    stream = io.BytesIO()
+    async for chunk in comm.stream():
+        if chunk["type"] == "audio":
+            stream.write(chunk["data"])
+    stream.seek(0)
+    return stream
+
+
 def speak_female_voice(text):
     """
-    Memutar suara wanita seketika (Super Instan <0.1 detik) ke headset tanpa jeda/buffering.
-    Menggunakan Microsoft Zira (Offline Native) sebagai mesin utama agar tidak lag akibat internet.
+    Memutar suara wanita Bahasa Indonesia yang sangat fasih, ringan, dan jernih (id-ID-GadisNeural).
+    Dapat terdengar jelas melalui speaker laptop, headset kabel, maupun headphone/TWS Bluetooth.
+    Dilengkapi sistem fallback otomatis ke SAPI5 & gTTS jika offline.
     """
     stop_audio()
-    print(f"\n[🗣️ Suara Cewek]: \"{text}\"")
+    print(f"\n[🗣️ Suara Cewek Fasih]: \"{text}\"")
 
-    # Jalur Utama: Windows Native SAPI5 Offline (Instant ~0.08 detik, 0 network lag, suara cewek jernih)
+    # Jalur Utama: Microsoft Edge Neural TTS - Suara Gadis (Fasih Bahasa Indonesia, Ringan, Alami)
+    try:
+        import asyncio
+        audio_stream = asyncio.run(_generate_edge_tts_audio(text, voice="id-ID-GadisNeural", rate="+15%"))
+        if audio_stream and audio_stream.getbuffer().nbytes > 0:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            pygame.mixer.music.load(audio_stream)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy():
+                time.sleep(0.04)
+            return
+    except Exception as e:
+        print(f"[!] Edge-TTS Gadis gagal ({e}), mengalihkan ke suara cadangan...")
+
+    # Jalur Cadangan 1: Windows SAPI5 Offline (Microsoft Zira)
     try:
         import pythoncom
         pythoncom.CoInitialize()
         spk = get_sapi_speaker()
         if spk:
-            # SVSFlagsAsync = 1 (non-blocking langsung mengalir ke headset tanpa jeda)
             spk.Speak(text, 1)
             spk.WaitUntilDone(-1)
             return
     except Exception as e:
         print(f"[!] Windows SAPI5 offline gagal ({e}), beralih ke gTTS...")
 
-    # Jalur Cadangan: gTTS online via pygame
+    # Jalur Cadangan 2: gTTS online via pygame
     try:
         from gtts import gTTS
         tts = gTTS(text=text, lang="id")
@@ -610,6 +637,8 @@ def main():
         masked = k[:8] + "..." + k[-4:]
         print(f"    - Key {i+1}: {masked}")
     print("[+] Model AI Knowledge: Ditraining 150 Soal TOEFL + Story-Telling Comprehension + Dual-Column OCR")
+    print("[+] Suara Cewek: Microsoft Gadis Neural (Fasih Bahasa Indonesia, Ringan & Jernih)")
+    print("[+] Audio Output: Speaker Laptop & Headset/Headphone (Auto-Route)")
 
     print("\n" + "-" * 65)
     print("📌 CARA KERJA (TANPA PERLU MENYALIN TEKS):")
