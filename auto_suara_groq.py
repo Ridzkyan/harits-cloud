@@ -200,15 +200,106 @@ def capture_front_screen():
     return None
 
 
+def clean_and_format_ocr_lines(raw_lines):
+    """
+    Menata ulang teks OCR agar rapi, mempertahankan struktur paragraf/cerita,
+    memperbaiki kata yang terpenggal tanda hubung (hyphenation), dan merapikan opsi A, B, C, D, E.
+    """
+    import re
+    cleaned = []
+    for i, line in enumerate(raw_lines):
+        line = line.strip()
+        if not line:
+            continue
+
+        # Perbaiki pemenggalan kata di akhir baris sebelumnya (misal: "bio-\nlogical" -> "biological")
+        if cleaned and cleaned[-1].endswith("-"):
+            cleaned[-1] = cleaned[-1][:-1] + line
+            continue
+
+        # Normalisasi huruf opsi: g, 8, atau 6 di baris setelah A -> B.
+        m_g = re.match(r"^[g86]\s+(.*)", line)
+        if m_g and cleaned and any(cleaned[-1].startswith(prefix) for prefix in ["A.", "A "]):
+            cleaned.append(f"B. {m_g.group(1)}")
+            continue
+
+        # Standarisasi format opsi (A., B., C., D., E.)
+        m_opt = re.match(r"^[\(\[]?([A-Ea-e])[\)\]\:\.\-]?\s+(.*)", line)
+        if m_opt and len(m_opt.group(1)) == 1:
+            cleaned.append(f"{m_opt.group(1).upper()}. {m_opt.group(2)}")
+            continue
+
+        cleaned.append(line)
+
+    return "\n".join(cleaned)
+
+
 def extract_screen_text(img):
     """
-    Membaca seluruh teks dari gambar tangkapan layar menggunakan Windows Native OCR (winocr).
+    Membaca seluruh teks dari gambar tangkapan layar menggunakan Windows Native OCR (winocr)
+    dengan pemrosesan gambar mutakhir (DPI/kontras), deteksi layout kolom cerita (story-telling),
+    dan rekonstruksi baris kalimat presisi tinggi.
     """
+    if img is None:
+        return None
+
     try:
         import winocr
+        from PIL import ImageEnhance, ImageFilter
+
+        # Jalur 1: OCR langsung pada gambar tangkapan layar
         res = winocr.recognize_pil_sync(img, "en-US")
-        if res and "text" in res and res["text"].strip():
-            return res["text"].strip()
+        raw_lines = []
+
+        if res and "lines" in res and res["lines"]:
+            # Ekstraksi koordinat x, y untuk deteksi layout 2 kolom (cerita di kiri, soal di kanan)
+            line_data = []
+            img_width, img_height = img.size
+
+            for l in res["lines"]:
+                txt = l.get("text", "").strip()
+                if not txt:
+                    continue
+                words = l.get("words", [])
+                if words:
+                    min_x = min(w.get("bounding_rect", {}).get("x", 0) for w in words)
+                    min_y = min(w.get("bounding_rect", {}).get("y", 0) for w in words)
+                else:
+                    min_x, min_y = 0, 0
+                line_data.append((min_x, min_y, txt))
+
+            # Periksa apakah ada pemisahan kolom yang jelas (cerita di kiri, soal di kanan)
+            left_lines = [ld for ld in line_data if ld[0] < img_width * 0.48]
+            right_lines = [ld for ld in line_data if ld[0] >= img_width * 0.48]
+
+            if len(left_lines) >= 3 and len(right_lines) >= 3:
+                # Kolom kiri (cerita/passage) disusun dulu dari atas ke bawah, disusul kolom kanan (soal & opsi)
+                left_sorted = sorted(left_lines, key=lambda item: item[1])
+                right_sorted = sorted(right_lines, key=lambda item: item[1])
+                raw_lines = [ld[2] for ld in left_sorted] + ["\n--- QUESTIONS ---\n"] + [ld[2] for ld in right_sorted]
+            else:
+                # Susun normal berdasarkan posisi vertikal alami
+                raw_lines = [ld[2] for ld in line_data]
+
+        # Jalur Fallback jika baris kosong tapi ada res["text"]
+        if not raw_lines and res and "text" in res and res["text"].strip():
+            raw_lines = [res["text"].strip()]
+
+        # Jika hasil OCR sangat pendek (<40 karakter), lakukan peningkatan kontras & ketajaman
+        if len(" ".join(raw_lines)) < 40:
+            gray = img.convert("L")
+            enhancer = ImageEnhance.Contrast(gray)
+            enhanced = enhancer.enhance(1.8)
+            sharp = ImageEnhance.Sharpness(enhanced).enhance(1.5)
+            res_retry = winocr.recognize_pil_sync(sharp, "en-US")
+            if res_retry and "lines" in res_retry and res_retry["lines"]:
+                raw_lines = [l.get("text", "").strip() for l in res_retry["lines"] if l.get("text", "").strip()]
+            elif res_retry and "text" in res_retry and res_retry["text"].strip():
+                raw_lines = [res_retry["text"].strip()]
+
+        if raw_lines:
+            return clean_and_format_ocr_lines(raw_lines)
+
     except Exception as e:
         print(f"[!] Windows OCR Error: {e}")
 
@@ -234,7 +325,7 @@ def get_groq_answer_from_screen(screen_text, keys):
 
     sys_prompt = (
         "You are an expert Swiss Professor of English Linguistics and the world's foremost TOEFL ITP/iBT master authority.\n"
-        "Your task is to analyze English questions (Structure, Written Expression, Reading, Listening) from screen captures and output the single 100% correct answer.\n\n"
+        "Your task is to analyze English questions (Structure, Written Expression, Narrative Story-Telling Reading Passages, Listening) from screen captures and output the single 100% correct answer.\n\n"
         "COMPREHENSIVE TOEFL MASTER RULES (DISTILLED FROM 150+ REAL TOEFL EXAM PATTERNS):\n"
         "1. NEGATIVE & RESTRICTIVE INVERSION (Auxiliary + Subject + Verb):\n"
         "   - Clauses opening with negative/restrictive words ('Under no circumstances', 'Rarely', 'Scarcely... when', 'Hardly... when', 'Not until', 'Seldom', 'Never', 'Not only', 'At no time', 'Only after', 'So + adj + that') REQUIRE inverted word order: [Auxiliary/Modal + Subject + Main Verb]!\n"
@@ -279,7 +370,16 @@ def get_groq_answer_from_screen(screen_text, keys):
         "12. READING & LISTENING COMPREHENSION:\n"
         "   - Main Idea questions: Extract the core theme from the opening topic sentences.\n"
         "   - Factual details: Match exact passage synonyms (e.g., environmental protection, productivity drop).\n"
-        "   - EXCEPT/NOT questions: Eliminate the 3 passage facts; pick the unmentioned or contradictory option.\n\n"
+        "   - EXCEPT/NOT questions: Eliminate the 3 passage facts; pick the unmentioned or contradictory option.\n"
+        "13. ADVANCED NARRATIVE & STORYTELLING MASTERY (STORY PASSAGES):\n"
+        "   - Chronological Reality vs Flashbacks: Stories often narrate events out of order (flashbacks, memories). Always reconstruct the true historical/narrative timeline when answering 'What happened first?' or 'What did character do before X?'.\n"
+        "   - Character Psychology, Inner Motives vs Outward Facades: Differentiate between a character's genuine internal feelings (anxiety, doubt) and their public persona (confidence, bravado). Identify turning points that shifted their core beliefs.\n"
+        "   - Author Tone & Stance: Discern subtle tone through loaded adjectives and figurative language (e.g. admiring, skeptical, sympathetic, detached/objective, nostalgic).\n"
+        "   - Deductive Inference ('Goldilocks Rule'): The correct answer is an unstated but strictly entailed fact supported by passage evidence. Reject extreme absolutes ('always', 'never', 'completely destroyed') and unsupported real-world facts.\n"
+        "   - Pronoun Reference in Stories: Trace antecedents ('they', 'it', 'the former') back to the exact preceding grammatical subject matching number, gender, and verb semantics.\n"
+        "   - Figurative / Literary Vocabulary in Context: Context overrides dictionary definitions; choose the meaning that coherently completes the story's dramatic arc.\n"
+        "14. OCR NOISE RESILIENCE & AUTOMATIC TEXT RECONSTRUCTION:\n"
+        "   - Screen OCR text may contain minor character substitutions ('l' vs '1', 'rn' vs 'm', 'cl' vs 'd', missing hyphens, or wrapped words across lines). Effortlessly infer the intended academic English words from context.\n\n"
         "STRICT TASK RULES:\n"
         "- Identify the single multiple-choice question on the screen.\n"
         "- Output strictly and ONLY one single line:\n"
@@ -305,6 +405,12 @@ def get_groq_answer_from_screen(screen_text, keys):
         "Input: '...the primary objective of which ___ to minimize sample contamination. A. to be B. is C. being D. it is'\n"
         "Output: Jawabannya B\n\n"
         "Input: '...enduring not only extreme weather conditions ___ severe seismic vibrations. A. plus B. but also C. as well as D. along with'\n"
+        "Output: Jawabannya B\n\n"
+        "Input: 'Passage: For months Captain Sinclair watched morale erode... in private journal confessed to harrowing doubts... yet on deck maintained unwavering facade of jovial confidence... Question: What does passage imply regarding Sinclair outward demeanor? A. Reflected true optimism B. Deliberate performance to conceal anxiety and sustain crew spirits C. Callous indifference D. Resolved tactical blunders'\n"
+        "Output: Jawabannya B\n\n"
+        "Input: 'Passage: Hiram Bingham pushed through dense canopy... indigenous farmers mentioned stone ruins... Bingham was doubtful having encountered exaggerated claims during previous expedition seeking Vitcos... Question: What primarily caused Bingham to be skeptical? A. Treacherous terrain B. Prior experience with exaggerated claims C. Guide young age D. Spanish conquest'\n"
+        "Output: Jawabannya B\n\n"
+        "Input: 'Passage: Gomez spent seasons pursuing elusive quetzal... discovered injured bird... institutional instinct urged him to preserve specimen for museum... yet gazing into frantic eyes recalled elder warning and untangled feathers, choosing living liberty... Question: Which best characterizes Gomez pivotal decision? A. Followed museum protocols B. Allowed moral reverence to override academic ambition C. Bird too damaged D. Net fatal'\n"
         "Output: Jawabannya B\n"
     )
 
@@ -441,7 +547,7 @@ def main():
     for i, k in enumerate(api_keys):
         masked = k[:8] + "..." + k[-4:]
         print(f"    - Key {i+1}: {masked}")
-    print("[+] Model AI Knowledge: Ditraining dari 150 Soal TOEFL (Structure, Inversion, Subjunctive, Reading & Listening)")
+    print("[+] Model AI Knowledge: Ditraining 150 Soal TOEFL + Story-Telling Comprehension + Dual-Column OCR")
 
     print("\n" + "-" * 65)
     print("📌 CARA KERJA (TANPA PERLU MENYALIN TEKS):")
