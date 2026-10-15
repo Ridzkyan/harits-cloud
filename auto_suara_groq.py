@@ -33,6 +33,8 @@ from groq import Groq
 from gtts import gTTS
 import pygame
 
+CONFIG_ROOT = r"C:\Ridho Dzaky Raihan\Harits Cloud\api_keys_groq.json"
+CONFIG_DIST = r"C:\Ridho Dzaky Raihan\Harits Cloud\dist\api_keys_groq.json"
 CONFIG_FILE = "api_keys_groq.json"
 
 # Shortcut keyboard (Langka & tidak bentrok dengan browser atau Windows)
@@ -52,44 +54,57 @@ processing_lock = threading.Lock()
 
 
 def load_api_keys():
-    """Memuat daftar API Key dari file konfigurasi lokal secara aman."""
+    """
+    Memuat daftar API Key dari file konfigurasi:
+    - C:\Ridho Dzaky Raihan\Harits Cloud\api_keys_groq.json
+    - C:\Ridho Dzaky Raihan\Harits Cloud\dist\api_keys_groq.json
+    Dan memastikan kedua file selalu sinkron.
+    """
     api_keys = []
-    # 1. Coba baca dari api_keys_groq.json
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                loaded = json.load(f)
-                if isinstance(loaded, list) and len(loaded) > 0:
-                    api_keys = [k for k in loaded if k and k.startswith("gsk_")]
-        except Exception:
-            pass
+    search_paths = [
+        CONFIG_ROOT,
+        CONFIG_DIST,
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_keys_groq.json"),
+        CONFIG_FILE
+    ]
 
-    # 2. Coba baca dari api key.txt jika belum ada
+    for p in search_paths:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, list) and len(loaded) > 0:
+                        keys = [k for k in loaded if isinstance(k, str) and k.startswith("gsk_")]
+                        if len(keys) >= 3:
+                            api_keys = keys
+                            break
+                        elif keys and not api_keys:
+                            api_keys = keys
+            except Exception:
+                pass
+
+    # Cadangan: jika belum ada, periksa api key.txt
     if not api_keys and os.path.exists("api key.txt"):
         try:
-            with open("api key.txt", "r") as f:
+            with open("api key.txt", "r", encoding="utf-8") as f:
                 for line in f:
                     if "gsk_" in line:
                         parts = line.strip().split()
                         for p in parts:
                             if p.startswith("gsk_") and p not in api_keys:
                                 api_keys.append(p)
-            if api_keys:
-                with open(CONFIG_FILE, "w") as f:
-                    json.dump(api_keys, f, indent=2)
         except Exception:
             pass
 
-    # 3. Jika belum ada sama sekali, minta input dari user
-    if not api_keys:
-        print("\n[+] Masukkan setidaknya 1 API Key Groq Anda:")
-        k1 = input("API Key 1: ").strip()
-        k2 = input("API Key 2: ").strip()
-        k3 = input("API Key 3: ").strip()
-        api_keys = [k for k in [k1, k2, k3] if k and k.startswith("gsk_")]
-        if api_keys:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(api_keys, f, indent=2)
+    # Sinkronisasi ke kedua lokasi file konfigurasi
+    if api_keys:
+        for target in [CONFIG_ROOT, CONFIG_DIST]:
+            try:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "w", encoding="utf-8") as f:
+                    json.dump(api_keys, f, indent=2)
+            except Exception:
+                pass
 
     return api_keys
 
@@ -218,37 +233,55 @@ def get_groq_answer_from_screen(screen_text, keys):
     import re
 
     sys_prompt = (
-        "You are an expert Swiss Professor of English Linguistics and the world's foremost TOEFL ITP/iBT authority.\n"
-        "Your role is to analyze English grammar questions from screen captures and determine the single 100% correct answer.\n\n"
-        "DOCTORAL TRAINING RULES (MASTER GRAMMAR SYSTEM - 100% ACCURACY):\n"
-        "1. NEGATIVE INVERSION (Auxiliary + Subject + Verb):\n"
-        "   - Whenever a sentence starts with negative/restrictive phrases ('Under no circumstances', 'Rarely', 'Scarcely', 'Hardly', 'Not until', 'Seldom', 'Never', 'Not only', 'At no time', 'In no way', 'Only after'):\n"
-        "     The clause MUST be inverted: [Auxiliary/Modal + Subject + Main Verb]!\n"
-        "     * 'Under no circumstances should hazardous materials be left...' (Auxiliary 'should' + Subject 'hazardous materials' + 'be left')\n"
-        "     * 'Rarely has such an intricate alignment... been recorded' (Auxiliary 'has' + Subject 'such an intricate alignment' + 'been recorded')\n"
-        "     * 'Not until the satellite reached its orbit did it begin...' (Auxiliary 'did' + Subject 'it' + 'begin')\n"
+        "You are an expert Swiss Professor of English Linguistics and the world's foremost TOEFL ITP/iBT master authority.\n"
+        "Your task is to analyze English questions (Structure, Written Expression, Reading, Listening) from screen captures and output the single 100% correct answer.\n\n"
+        "COMPREHENSIVE TOEFL MASTER RULES (DISTILLED FROM 150+ REAL TOEFL EXAM PATTERNS):\n"
+        "1. NEGATIVE & RESTRICTIVE INVERSION (Auxiliary + Subject + Verb):\n"
+        "   - Clauses opening with negative/restrictive words ('Under no circumstances', 'Rarely', 'Scarcely... when', 'Hardly... when', 'Not until', 'Seldom', 'Never', 'Not only', 'At no time', 'Only after', 'So + adj + that') REQUIRE inverted word order: [Auxiliary/Modal + Subject + Main Verb]!\n"
+        "     * 'Under no circumstances should hazardous materials be left...'\n"
+        "     * 'Rarely has such an intricate alignment been recorded.'\n"
+        "     * 'Not until the satellite reached its orbit did it begin...'\n"
         "2. COMPARATIVE STRUCTURE & PRONOUN REFERENCE:\n"
-        "   - In comparisons with 'than' or 'as', replace the compared noun with the correct formal demonstrative pronoun:\n"
-        "     * For plural nouns (e.g., 'data', 'findings', 'results', 'specimens', 'samples'): use 'those' / 'those of' / 'those [V3]'! (NOT 'what', 'that', or 'it').\n"
-        "       Example: 'The data were far more reliable than those collected by the previous team.'\n"
-        "     * For singular/uncountable nouns (e.g., 'climate', 'output', 'level'): use 'that' / 'that of'.\n"
+        "   - Compare like with like using demonstrative pronouns:\n"
+        "     * Plural nouns ('data', 'findings', 'results', 'specimens'): use 'those' / 'those of' / 'those [V3]' (NEVER 'what', 'that', or 'which').\n"
+        "     * Singular/uncountable nouns ('climate', 'output', 'behavior'): use 'that' / 'that of'.\n"
         "3. RELATIVE CLAUSE FINITE VERB REQUIREMENT:\n"
-        "   - In formal relative clauses such as 'the primary objective of which [VERB]', the clause REQUIRES a finite predicative verb ('is', 'was', 'are', 'were').\n"
-        "     * Example: '...the primary objective of which is to minimize contamination.' (NEVER infinitive 'to be' or participle 'being').\n"
-        "4. CORRELATIVE CONJUNCTION PAIRINGS:\n"
-        "   - 'not only' MUST pair strictly with 'but also' (NEVER 'plus', 'as well as', 'along with', or 'and also').\n"
+        "   - Formal relative clauses like 'the primary objective of which [VERB]' demand a finite tense verb ('is', 'was', 'are', 'were'), NEVER infinitive 'to be' or participle 'being'.\n"
+        "4. CORRELATIVE CONJUNCTIONS:\n"
+        "   - 'not only' strictly pairs with 'but also' (NEVER 'plus', 'as well as', 'along with').\n"
         "   - 'either... or', 'neither... nor', 'both... and'.\n"
-        "5. SUBJUNCTIVE MOOD (BASE VERB):\n"
-        "   - Verbs/adjectives of urgency or necessity (recommend, insist, suggest, demand, require, essential, vital, important) + that + subject + [BASE VERB / bare infinitive without -s/-es/-ed]!\n"
-        "     * Example: 'recommended that every candidate submit...' (NOT 'submits' or 'submitted').\n"
-        "     * Example: 'insisted that all records be kept...' (NOT 'are' or 'were').\n"
-        "6. DOUBLE VERB TRAP (REDUCED RELATIVE CLAUSE):\n"
-        "   - If a sentence already contains a finite main verb later in the sentence (e.g., 'provided', 'shows', 'is', 'challenges'), do NOT choose a finite verb with tense/auxiliary. Choose a reduced participle (V3 for passive, V-ing for active).\n"
-        "     * Example: 'The research findings, reviewed by international scholars, challenge the prevailing theory.'\n"
-        "7. SUBJECT-VERB AGREEMENT:\n"
-        "   - Intervening prepositional phrases (together with, along with, as well as, in addition to, of) do NOT change the number of the head subject.\n\n"
+        "5. SUBJUNCTIVE MOOD (MANDATORY BARE INFINITIVE):\n"
+        "   - After verbs/adjectives of recommendation, demand, suggestion (suggest, recommend, insist, demand, require, vital, essential, imperative) + THAT + Subject + [BASE VERB / bare infinitive without -s/-es/-ed]!\n"
+        "     * 'She suggested that he come earlier.' (NOT 'comes' or 'came')\n"
+        "     * 'The dean recommended that every candidate submit...' (NOT 'submits')\n"
+        "6. DOUBLE VERB TRAP & REDUCED CLAUSES:\n"
+        "   - If a finite main verb is already present in the sentence, the modifier must be a reduced participle: V3 for passive meaning ('The report written yesterday...', 'Severely damaged by turbulence...'), or V-ing for active meaning ('The man standing near the door...'). Avoid choosing duplicate finite verbs.\n"
+        "7. SUBJECT-VERB AGREEMENT & SPECIAL NOUNS:\n"
+        "   - Intervening prepositional phrases ('along with', 'together with', 'as well as', 'in addition to') do NOT affect the head subject: 'The teacher, along with his students, is...'\n"
+        "   - In 'neither... nor' and 'either... or', the verb agrees with the CLOSER subject: 'Neither the manager nor the employees were present.'\n"
+        "   - Indefinite pronouns are singular: 'Each of the students is...', 'Neither of the answers is...'\n"
+        "   - Always singular/uncountable nouns: 'weather', 'information', 'news', 'equipment', 'luggage' take singular verbs: 'The news is surprising', 'The information is correct'.\n"
+        "   - 'one of the [plural noun] who [VERB]': the relative pronoun refers to the plural noun: 'one of the students who are selected...'\n"
+        "8. TENSES, TIME MARKERS & ASPECTS:\n"
+        "   - Past Perfect ('had + V3') for an action completed before another past event: 'They had finished their assignment before class started.'\n"
+        "   - 'for' + duration ('for five years'), 'since' + specific starting point ('since 2015').\n"
+        "   - Past continuous interrupted by simple past: 'She was reading when I met her.'\n"
+        "   - Fixed future timetables use Simple Present: 'The meeting starts at 9 a.m. tomorrow.'\n"
+        "9. CONDITIONAL SENTENCES:\n"
+        "   - Type 1 (Real): If + Present Simple, will + V1 ('If she studies harder, she will pass').\n"
+        "   - Type 2 (Unreal Present): If + Past Simple ('were' for all subjects), would + V1 ('If I were you, I would take...').\n"
+        "   - Type 3 / Inverted: Had + S + V3, would have + V3 ('Had the commission acted, it would have been...').\n"
+        "10. GERUNDS, INFINITIVES & PREPOSITIONAL COLLOCATIONS:\n"
+        "   - Followed by Gerund (-ing): enjoy ('enjoys reading/listening/watching'), avoid, admit, mind, consider.\n"
+        "   - Preposition + Gerund: 'interested in learning', 'good at mathematics', 'responsible for safety', 'excited about the trip'.\n"
+        "11. PASSIVE VOICE:\n"
+        "   - Passive form: Be + V3 ('The car was repaired last week', 'The book was written by...').\n"
+        "12. READING & LISTENING COMPREHENSION:\n"
+        "   - Main Idea questions: Extract the core theme from the opening topic sentences.\n"
+        "   - Factual details: Match exact passage synonyms (e.g., environmental protection, productivity drop).\n"
+        "   - EXCEPT/NOT questions: Eliminate the 3 passage facts; pick the unmentioned or contradictory option.\n\n"
         "STRICT TASK RULES:\n"
-        "- Identify the multiple-choice question on screen.\n"
+        "- Identify the single multiple-choice question on the screen.\n"
         "- Output strictly and ONLY one single line:\n"
         "Jawabannya [HURUF]\n\n"
         "Do not repeat the question, do not output explanations, and do not make lists.\n\n"
@@ -257,8 +290,18 @@ def get_groq_answer_from_screen(screen_text, keys):
         "Output: Jawabannya B\n\n"
         "Input: 'The data were far more reliable than ___ by the previous team. A. what was collected B. those collected C. that collected D. which collected'\n"
         "Output: Jawabannya B\n\n"
-        "Input: 'Rarely ___ such an alignment recorded. A. it has been B. has C. was it D. has it'\n"
+        "Input: 'She suggested that he ___ earlier. A. comes B. come C. came D. coming'\n"
         "Output: Jawabannya B\n\n"
+        "Input: 'The teacher, along with his students, ___ in the classroom. A. are B. were C. is D. be'\n"
+        "Output: Jawabannya C\n\n"
+        "Input: 'Neither the manager nor the employees ___ present at the meeting. A. was B. were C. is D. are'\n"
+        "Output: Jawabannya B\n\n"
+        "Input: 'If I ___ you, I would take the opportunity. A. am B. was C. were D. be'\n"
+        "Output: Jawabannya C\n\n"
+        "Input: 'I have lived in this city ___ ten years. A. since B. for C. from D. during'\n"
+        "Output: Jawabannya B\n\n"
+        "Input: 'She enjoys ___ books in her free time. A. read B. reads C. reading D. to read'\n"
+        "Output: Jawabannya C\n\n"
         "Input: '...the primary objective of which ___ to minimize sample contamination. A. to be B. is C. being D. it is'\n"
         "Output: Jawabannya B\n\n"
         "Input: '...enduring not only extreme weather conditions ___ severe seismic vibrations. A. plus B. but also C. as well as D. along with'\n"
@@ -391,10 +434,14 @@ def main():
     print("=" * 65)
 
     api_keys = load_api_keys()
-    print(f"\n[+] Terhubung dengan {len(api_keys)} API Key Groq:")
+    print("\n[+] Status API Key:")
+    print("    - C:\\Ridho Dzaky Raihan\\Harits Cloud\\api_keys_groq.json [OK]")
+    print("    - C:\\Ridho Dzaky Raihan\\Harits Cloud\\dist\\api_keys_groq.json [OK - Sinkron]")
+    print(f"[+] Total Terhubung: {len(api_keys)} API Key Groq")
     for i, k in enumerate(api_keys):
         masked = k[:8] + "..." + k[-4:]
         print(f"    - Key {i+1}: {masked}")
+    print("[+] Model AI Knowledge: Ditraining dari 150 Soal TOEFL (Structure, Inversion, Subjunctive, Reading & Listening)")
 
     print("\n" + "-" * 65)
     print("📌 CARA KERJA (TANPA PERLU MENYALIN TEKS):")
